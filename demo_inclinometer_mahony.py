@@ -35,6 +35,7 @@ def test_inclinometer_mahony():
                'accel_b_corr': np.array([200.0, 200.0, 200.0]),
                'mag_std': np.array([0.2, 0.2, 0.2]) * 1.0
               }
+    imu_err = 'high-accuracy'
     # do not generate GPS and magnetometer data
     imu = imu_model.IMU(accuracy=imu_err, axis=6, gps=False)
 
