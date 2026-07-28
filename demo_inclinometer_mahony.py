@@ -10,6 +10,7 @@ Created on 2018-01-23
 import os
 import math
 import numpy as np
+import matplotlib.pyplot as plt
 from gnss_ins_sim.sim import imu_model
 from gnss_ins_sim.sim import ins_sim
 
@@ -53,6 +54,26 @@ def test_inclinometer_mahony():
     sim.run()
     # generate simulation results, summary, and save data to files
     sim.results()  # do not save data
+
+    # Plot true (simulated) vs estimated pitch/roll for the first algo/run.
+    time, ref_att_euler, att_euler = sim.get_data(['time', 'ref_att_euler', 'att_euler'])
+    first_key = next(iter(att_euler))
+    est_att = att_euler[first_key]
+
+    fig, axes = plt.subplots(2, 1, sharex=True, num='Pitch/Roll: Truth vs Mahony')
+    axes[0].plot(time, np.rad2deg(ref_att_euler[:, 1]), label='true pitch')
+    axes[0].plot(time, np.rad2deg(est_att[:, 1]), '--', label='filter pitch')
+    axes[0].set_ylabel('Pitch (deg)')
+    axes[0].grid(True)
+    axes[0].legend()
+
+    axes[1].plot(time, np.rad2deg(ref_att_euler[:, 2]), label='true roll')
+    axes[1].plot(time, np.rad2deg(est_att[:, 2]), '--', label='filter roll')
+    axes[1].set_xlabel('Time (s)')
+    axes[1].set_ylabel('Roll (deg)')
+    axes[1].grid(True)
+    axes[1].legend()
+
     # plot data
     sim.plot(['att_euler', 'wb', 'ab'], opt={'att_euler': 'error'})
 
