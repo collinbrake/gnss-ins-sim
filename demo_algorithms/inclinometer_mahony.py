@@ -38,6 +38,13 @@ class MahonyFilter(object):
         self.kp_acc_low = 0.01
         self.ki_acc_high = 0.5
         self.ki_acc_low = 0.001
+
+        if True:
+            self.kp_acc_high = 2
+            self.kp_acc_low = 1
+            # self.ki_acc_high = 0.01
+            # self.ki_acc_low = 0.01
+
         # state
         self.ini = 0                                # indicate if attitude is initialized
         self.dt = 1.0                               # sample period, sec
