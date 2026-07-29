@@ -36,6 +36,132 @@ We provide the following demos to show how to use this tool:
 | demo_multiple_algorithms.py | A demo of multiple algorithms in a simulation. This demo shows how to compare resutls of multiple algorithm.|
 | demo_gen_data_from_files.py | This demo shows how to do simulation from logged data files.|
 
+# Get started - parquet data with Mahony inclinometer demo
+
+This `collinbrake/gnss-ins-sim` fork of the `aceinna/gnss-ins-sim` repository adds functionality to read recorded IMU data from parquet files instead of simulating data through motion definitions. The application this was designed for is CAN bus IMU data decoded to parquet format, where one parquet file is created per CAN message, and signals may be distributed with arbitrary names over arbitrary messages based on the IMU component under test.
+
+Expected units in parquet data:
+- Time: seconds
+- Acceleration: m/s^2
+- Gyroscope: deg/s
+- Reference angles (pitch and roll): degrees
+
+The goal is to run the Mahony inclinometer algorithm from this repository on recorded raw gyro and accelerometer data, then compare the filter output with a baseline recorded pitch and roll.
+
+## Step 1 Organize the recorded data
+
+Create one top-level folder per sensor configuration. Inside that folder, create one subfolder per CAN message stream. For each recording run, keep the same parquet filename across all message subfolders so runs can be matched.
+
+Example:
+
+sensor1/
+  ├── msg1/
+  │   └── test1.parquet
+  │   └── test2.parquet
+  ├── msg2/
+  │   └── test1.parquet
+  │   └── test2.parquet
+  └── msg3/
+      └── test1.parquet
+      └── test2.parquet
+
+In this example, all files named test1.parquet belong to one synchronized run, and all files named test2.parquet belong to another run.
+
+## Step 2 Create data mapping file
+
+Create a YAML file at the same level as the message subfolders. The YAML maps parser fields to:
+- msg: which message subfolder contains the signal
+- signal: which parquet column to read
+
+sensor1.yaml example:
+- Accelerometer x, y, z come from one message stream
+- Gyroscope x, y, z come from one message stream
+- Pitch and roll come from one validated angle stream
+  
+```yaml
+parquet_column_map:
+
+  time: time_s
+
+  accel:
+    msg:
+      x: accel
+      y: accel
+      z: accel
+    signal:
+      x: x
+      y: y
+      z: z
+
+  gyro:
+    msg:
+      x: gyro
+      y: gyro
+      z: gyro
+    signal:
+      x: x
+      y: y
+      z: z
+
+  angle:
+    msg:
+      pitch: angles
+      roll: angles
+    signal:
+      pitch: pitch
+      roll: roll
+```
+
+sensor2.yaml example:
+- One message per axis (x, y, z), where each axis message contains both accelerometer and gyroscope for that axis
+- Pitch and roll come from one validated angle stream
+
+```yaml
+parquet_column_map:
+
+  time: time_s
+
+  accel:
+    msg:
+      x: msg1
+      y: msg2
+      z: msg3
+    signal:
+      x: accel_x
+      y: accel_y
+      z: accel_z
+
+  gyro:
+    msg:
+      x: msg1
+      y: msg2
+      z: msg3
+    signal:
+      x: gyro_x
+      y: gyro_y
+      z: gyro_z
+
+  angle:
+    msg:
+      pitch: msg4
+      roll: msg4
+    signal:
+      pitch: pitch_deg
+      roll: roll_deg
+```
+
+Python can read this file to map parquet columns to the parser input fields.
+
+If multiple sensors that provide different data layouts and units are tested, it is recommended to create a different `topfolder` for each sensor/mapping in Step 1.
+
+## Step 3 Run the parquet demo
+
+Run the demo by providing the sensor name (data folder name). All other data layout information is read from the YAML configuration file in this folder (Step 2).
+
+```bash
+python demo_inclinometer_mahony_parquet.py --sensor sensor1
+```
+
 # Get started
 
 ## Step 1 Define the IMU model
