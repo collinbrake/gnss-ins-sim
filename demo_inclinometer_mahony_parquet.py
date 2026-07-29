@@ -161,7 +161,7 @@ def _build_data_arrays(frames, col_map):
     t = frames[master_msg][time_col].to_numpy(dtype=float)
 
     accel = np.zeros((len(t), 3))
-    gyro = np.zeros((len(t), 3))
+    gyro_deg = np.zeros((len(t), 3))
 
     axis_order = ("x", "y", "z")
     for i, axis in enumerate(axis_order):
@@ -170,10 +170,10 @@ def _build_data_arrays(frames, col_map):
         g_msg = col_map["gyro"]["msg"][axis]
         g_sig = col_map["gyro"]["signal"][axis]
         accel[:, i] = _extract_series(frames, a_msg, a_sig, time_col, t)
-        gyro[:, i] = _extract_series(frames, g_msg, g_sig, time_col, t)
+        gyro_deg[:, i] = _extract_series(frames, g_msg, g_sig, time_col, t)
 
     # Source accel is already m/s^2. Convert source gyro deg/s to rad/s for Mahony.
-    gyro = np.deg2rad(gyro)
+    gyro_rad = np.deg2rad(gyro_deg)
 
     angle_msg_map = col_map["angle"]["msg"]
     pitch_msg = _mapping_angle_msg_name(angle_msg_map, "pitch")
@@ -184,7 +184,7 @@ def _build_data_arrays(frames, col_map):
     ref_pitch = _extract_series(frames, pitch_msg, pitch_sig, time_col, t)
     ref_roll = _extract_series(frames, roll_msg, roll_sig, time_col, t)
 
-    return t, accel, gyro, ref_pitch, ref_roll
+    return t, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll
 
 
 def _estimate_fs(time_s):
@@ -207,7 +207,7 @@ def _run_mahony(fs, accel, gyro):
     return est_pitch_deg, est_roll_deg
 
 
-def _plot_results(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
+def _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
     pitch_err = est_pitch - ref_pitch
     roll_err = est_roll - ref_roll
 
@@ -240,6 +240,43 @@ def _plot_results(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
     plt.show()
 
 
+def _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name):
+    # Common body-frame pairing for quick sign/alignment inspection.
+    # pitch <-> gyro y, roll <-> gyro x
+    gyro_x = gyro_deg[:, 0]
+    gyro_y = gyro_deg[:, 1]
+
+    print("Run file: %s" % run_name)
+
+    fig, axes = plt.subplots(2, 1, sharex=True, num="Baseline Angle and Gyro")
+
+    ax_pitch = axes[0]
+    ax_pitch_gyro = ax_pitch.twinx()
+    line_pitch, = ax_pitch.plot(time_s, ref_pitch, color="C0", label="ref pitch")
+    line_pitch_gyro, = ax_pitch_gyro.plot(
+        time_s, gyro_y, color="C1", linestyle="--", label="gyro y"
+    )
+    ax_pitch.set_ylabel("Pitch (deg)")
+    ax_pitch_gyro.set_ylabel("Gyro Y (deg/s)")
+    ax_pitch.grid(True)
+    ax_pitch.legend([line_pitch, line_pitch_gyro], ["ref pitch", "gyro y"], loc="upper right")
+
+    ax_roll = axes[1]
+    ax_roll_gyro = ax_roll.twinx()
+    line_roll, = ax_roll.plot(time_s, ref_roll, color="C0", label="ref roll")
+    line_roll_gyro, = ax_roll_gyro.plot(
+        time_s, gyro_x, color="C1", linestyle="--", label="gyro x"
+    )
+    ax_roll.set_xlabel("Time (s)")
+    ax_roll.set_ylabel("Roll (deg)")
+    ax_roll_gyro.set_ylabel("Gyro X (deg/s)")
+    ax_roll.grid(True)
+    ax_roll.legend([line_roll, line_roll_gyro], ["ref roll", "gyro x"], loc="upper right")
+
+    plt.tight_layout()
+    plt.show()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run Mahony inclinometer from parquet message folders using YAML mapping."
@@ -259,6 +296,12 @@ def main():
         required=True,
         help="Parquet run filename (with or without .parquet).",
     )
+    parser.add_argument(
+        "--plot-mode",
+        choices=["compare", "baseline-gyro"],
+        default="compare",
+        help="compare: baseline vs Mahony + error. baseline-gyro: baseline angle with direct gyro overlay.",
+    )
     args = parser.parse_args()
 
     sensor_dir = os.path.join(args.path, args.sensor_folder)
@@ -274,11 +317,13 @@ def main():
     run_name = _resolve_run_name(sensor_dir, required_msgs, args.test_file)
     frames = _read_msg_frames(sensor_dir, required_msgs, run_name)
 
-    time_s, accel, gyro, ref_pitch, ref_roll = _build_data_arrays(frames, col_map)
-    fs = _estimate_fs(time_s)
-    est_pitch, est_roll = _run_mahony(fs, accel, gyro)
-
-    _plot_results(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name)
+    time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _build_data_arrays(frames, col_map)
+    if args.plot_mode == "baseline-gyro":
+        _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name)
+    else:
+        fs = _estimate_fs(time_s)
+        est_pitch, est_roll = _run_mahony(fs, accel, gyro_rad)
+        _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name)
 
 
 if __name__ == "__main__":
