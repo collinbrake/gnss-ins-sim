@@ -91,6 +91,32 @@ def _resolve_run_name(sensor_dir, required_msgs, run_name=None):
     return run_name
 
 
+def _resolve_mapping_file(sensor_dir, sensor_folder_name):
+    default_mapping = os.path.join(sensor_dir, sensor_folder_name + ".yaml")
+    if os.path.isfile(default_mapping):
+        return default_mapping
+
+    yaml_files = []
+    for name in os.listdir(sensor_dir):
+        low = name.lower()
+        if low.endswith(".yaml") or low.endswith(".yml"):
+            yaml_files.append(os.path.join(sensor_dir, name))
+
+    if len(yaml_files) == 1:
+        return yaml_files[0]
+
+    if len(yaml_files) == 0:
+        raise FileNotFoundError(
+            "No YAML mapping file found in sensor folder '%s'. Expected '%s.yaml' or one YAML file."
+            % (sensor_dir, sensor_folder_name)
+        )
+
+    raise ValueError(
+        "Multiple YAML mapping files found in sensor folder '%s'. Keep one YAML file in this folder."
+        % sensor_dir
+    )
+
+
 def _read_msg_frames(sensor_dir, msg_folders, run_name):
     frames = {}
     for msg in msg_folders:
@@ -219,37 +245,33 @@ def main():
         description="Run Mahony inclinometer from parquet message folders using YAML mapping."
     )
     parser.add_argument(
-        "--sensor",
+        "--path",
         required=True,
-        help="Sensor folder name under --data-root (e.g., sensor1).",
+        help="Root path containing sensor folders.",
     )
     parser.add_argument(
-        "--data-root",
-        default=".",
-        help="Root directory containing sensor folders. Default: current directory.",
+        "--sensor-folder",
+        required=True,
+        help="Sensor folder name under --path (e.g., sensor1).",
     )
     parser.add_argument(
-        "--mapping",
-        default=None,
-        help="Mapping YAML path. Default: <sensor_folder>/<sensor>.yaml",
-    )
-    parser.add_argument(
-        "--run",
-        default=None,
-        help="Optional run file name (with or without .parquet).",
+        "--test-file",
+        required=True,
+        help="Parquet run filename (with or without .parquet).",
     )
     args = parser.parse_args()
 
-    sensor_dir = os.path.join(args.data_root, args.sensor)
-    mapping_file = args.mapping
-    if mapping_file is None:
-        mapping_file = os.path.join(sensor_dir, args.sensor + ".yaml")
+    sensor_dir = os.path.join(args.path, args.sensor_folder)
+    if not os.path.isdir(sensor_dir):
+        raise FileNotFoundError("Sensor folder not found: %s" % sensor_dir)
+
+    mapping_file = _resolve_mapping_file(sensor_dir, args.sensor_folder)
 
     cfg = _load_mapping(mapping_file)
     col_map = cfg["parquet_column_map"]
 
     required_msgs = _collect_required_msg_folders(col_map)
-    run_name = _resolve_run_name(sensor_dir, required_msgs, args.run)
+    run_name = _resolve_run_name(sensor_dir, required_msgs, args.test_file)
     frames = _read_msg_frames(sensor_dir, required_msgs, run_name)
 
     time_s, accel, gyro, ref_pitch, ref_roll = _build_data_arrays(frames, col_map)
