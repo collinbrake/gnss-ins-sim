@@ -269,7 +269,7 @@ def _accel_tilt_deg(accel):
     ax = accel[:, 0]
     ay = accel[:, 1]
     az = accel[:, 2]
-    pitch_deg = np.rad2deg(np.arctan2(-ax, np.sqrt(ay * ay + az * az)))
+    pitch_deg = np.rad2deg(np.arctan2(ax, np.sqrt(ay * ay + az * az)))
     roll_deg = np.rad2deg(np.arctan2(ay, az))
     return pitch_deg, roll_deg
 
@@ -346,10 +346,13 @@ def _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name):
 
 def _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run_name):
     pitch_accel, roll_accel = _accel_tilt_deg(accel)
+    acc_x = accel[:, 0]
+    acc_y = accel[:, 1]
+    acc_z = accel[:, 2]
 
     print("Run file: %s" % run_name)
 
-    fig, axes = plt.subplots(2, 1, sharex=True, num="Baseline vs Accel-Only Tilt")
+    fig, axes = plt.subplots(3, 1, sharex=True, num="Baseline vs Accel-Only Tilt")
 
     axes[0].plot(time_s, pitch_accel, color="gold", label="pitch from accel")
     axes[0].plot(time_s, ref_pitch, color="C0", label="baseline pitch")
@@ -359,10 +362,17 @@ def _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run_name)
 
     axes[1].plot(time_s, roll_accel, color="gold", label="roll from accel")
     axes[1].plot(time_s, ref_roll, color="C0", label="baseline roll")
-    axes[1].set_xlabel("Time (s)")
     axes[1].set_ylabel("Roll (deg)")
     axes[1].grid(True)
     axes[1].legend()
+
+    axes[2].plot(time_s, acc_x, label="acc x")
+    axes[2].plot(time_s, acc_y, label="acc y")
+    axes[2].plot(time_s, acc_z, label="acc z")
+    axes[2].set_xlabel("Time (s)")
+    axes[2].set_ylabel("Accel (m/s^2)")
+    axes[2].grid(True)
+    axes[2].legend()
 
     plt.tight_layout()
     plt.show()
