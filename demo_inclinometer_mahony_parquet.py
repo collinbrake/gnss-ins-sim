@@ -315,7 +315,7 @@ def _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name):
 
     print("Run file: %s" % run_name)
 
-    fig, axes = plt.subplots(2, 1, sharex=True, num="Baseline Angle and Gyro")
+    fig, axes = plt.subplots(3, 1, sharex=True, num="Baseline Angle and Gyro")
 
     ax_pitch = axes[0]
     ax_pitch_gyro = ax_pitch.twinx()
@@ -334,11 +334,18 @@ def _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name):
     line_roll_gyro, = ax_roll_gyro.plot(
         time_s, gyro_x, color="C1", linestyle="--", label="gyro x"
     )
-    ax_roll.set_xlabel("Time (s)")
     ax_roll.set_ylabel("Roll (deg)")
     ax_roll_gyro.set_ylabel("Gyro X (deg/s)")
     ax_roll.grid(True)
     ax_roll.legend([line_roll, line_roll_gyro], ["ref roll", "gyro x"], loc="upper right")
+
+    axes[2].plot(time_s, gyro_deg[:, 0], label="gyro x")
+    axes[2].plot(time_s, gyro_deg[:, 1], label="gyro y")
+    axes[2].plot(time_s, gyro_deg[:, 2], label="gyro z")
+    axes[2].set_xlabel("Time (s)")
+    axes[2].set_ylabel("Gyro (deg/s)")
+    axes[2].grid(True)
+    axes[2].legend()
 
     plt.tight_layout()
     plt.show()
