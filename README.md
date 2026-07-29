@@ -159,7 +159,7 @@ If multiple sensors that provide different data layouts and units are tested, it
 Run the demo by providing the sensor name (data folder name). All other data layout information is read from the YAML configuration file in this folder (Step 2).
 
 ```bash
-python demo_inclinometer_mahony_parquet.py --sensor sensor1
+python demo_inclinometer_mahony_parquet.py --path path/to/data --sensor-folder sensor1 --test-file test1
 ```
 
 # Get started
