@@ -134,6 +134,63 @@ def _interp_to_target(source_t, source_v, target_t):
     return np.interp(target_t, unique_t, unique_v)
 
 
+def _datetime_int_scale_seconds(dtype_obj):
+    # dtype examples: datetime64[us, UTC], datetime64[ns], datetime64[ms, UTC]
+    dtype_str = str(dtype_obj)
+    if "datetime64[" not in dtype_str:
+        return 1.0
+    inside = dtype_str.split("datetime64[", 1)[1].split("]", 1)[0]
+    unit = inside.split(",", 1)[0].strip()
+    if unit == "ns":
+        return 1e-9
+    if unit == "us":
+        return 1e-6
+    if unit == "ms":
+        return 1e-3
+    if unit == "s":
+        return 1.0
+    # Fallback: nanoseconds convention
+    return 1e-9
+
+
+def _time_series_to_seconds(time_series):
+    # Datetime path: convert to unix seconds.
+    if pd.api.types.is_datetime64_any_dtype(time_series):
+        ticks = time_series.astype("int64").to_numpy()
+        scale = _datetime_int_scale_seconds(time_series.dtype)
+        return ticks.astype(float) * scale
+
+    # Object path: try datetime parsing first, then numeric.
+    if pd.api.types.is_object_dtype(time_series):
+        dt = pd.to_datetime(time_series, errors="coerce", utc=True)
+        if dt.notna().all():
+            ticks = dt.astype("int64").to_numpy()
+            scale = _datetime_int_scale_seconds(dt.dtype)
+            return ticks.astype(float) * scale
+        numeric = pd.to_numeric(time_series, errors="coerce")
+        if np.isnan(numeric.to_numpy()).any():
+            raise ValueError("Time column contains values that are neither datetime nor numeric.")
+        arr = numeric.to_numpy(dtype=float)
+    else:
+        arr = pd.to_numeric(time_series, errors="coerce").to_numpy(dtype=float)
+        if np.isnan(arr).any():
+            raise ValueError("Time column contains non-numeric values.")
+
+    # Numeric path: infer scale if likely epoch-style units.
+    dt = np.diff(arr)
+    dt = dt[dt > 0.0]
+    if dt.size == 0:
+        return arr
+    dt_med = np.median(dt)
+    if dt_med > 1e6:
+        return arr * 1e-9   # ns -> s
+    if dt_med > 1e3:
+        return arr * 1e-6   # us -> s
+    if dt_med > 1.0:
+        return arr * 1e-3   # ms -> s
+    return arr              # already seconds
+
+
 def _extract_series(frames, msg_name, signal_name, time_col, target_t):
     frame = frames[msg_name]
     if signal_name not in frame.columns:
@@ -141,7 +198,7 @@ def _extract_series(frames, msg_name, signal_name, time_col, target_t):
 
     values = frame[signal_name].to_numpy(dtype=float)
     if time_col in frame.columns:
-        source_t = frame[time_col].to_numpy(dtype=float)
+        source_t = _time_series_to_seconds(frame[time_col])
         return _interp_to_target(source_t, values, target_t)
 
     if len(values) != len(target_t):
@@ -158,7 +215,8 @@ def _build_data_arrays(frames, col_map):
     if time_col not in frames[master_msg].columns:
         raise KeyError("Time column '%s' not found in master msg '%s'." % (time_col, master_msg))
 
-    t = frames[master_msg][time_col].to_numpy(dtype=float)
+    t_abs = _time_series_to_seconds(frames[master_msg][time_col])
+    t = t_abs - t_abs[0]
 
     accel = np.zeros((len(t), 3))
     gyro_deg = np.zeros((len(t), 3))
@@ -169,8 +227,8 @@ def _build_data_arrays(frames, col_map):
         a_sig = col_map["accel"]["signal"][axis]
         g_msg = col_map["gyro"]["msg"][axis]
         g_sig = col_map["gyro"]["signal"][axis]
-        accel[:, i] = _extract_series(frames, a_msg, a_sig, time_col, t)
-        gyro_deg[:, i] = _extract_series(frames, g_msg, g_sig, time_col, t)
+        accel[:, i] = _extract_series(frames, a_msg, a_sig, time_col, t_abs)
+        gyro_deg[:, i] = _extract_series(frames, g_msg, g_sig, time_col, t_abs)
 
     # Source accel is already m/s^2. Convert source gyro deg/s to rad/s for Mahony.
     gyro_rad = np.deg2rad(gyro_deg)
@@ -181,8 +239,8 @@ def _build_data_arrays(frames, col_map):
     pitch_sig = col_map["angle"]["signal"]["pitch"]
     roll_sig = col_map["angle"]["signal"]["roll"]
 
-    ref_pitch = _extract_series(frames, pitch_msg, pitch_sig, time_col, t)
-    ref_roll = _extract_series(frames, roll_msg, roll_sig, time_col, t)
+    ref_pitch = _extract_series(frames, pitch_msg, pitch_sig, time_col, t_abs)
+    ref_roll = _extract_series(frames, roll_msg, roll_sig, time_col, t_abs)
 
     return t, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll
 
@@ -205,6 +263,15 @@ def _run_mahony(fs, accel, gyro):
     est_pitch_deg = np.rad2deg(est_euler[:, 1])
     est_roll_deg = np.rad2deg(est_euler[:, 2])
     return est_pitch_deg, est_roll_deg
+
+
+def _accel_tilt_deg(accel):
+    ax = accel[:, 0]
+    ay = accel[:, 1]
+    az = accel[:, 2]
+    pitch_deg = np.rad2deg(np.arctan2(-ax, np.sqrt(ay * ay + az * az)))
+    roll_deg = np.rad2deg(np.arctan2(ay, az))
+    return pitch_deg, roll_deg
 
 
 def _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
@@ -277,6 +344,30 @@ def _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name):
     plt.show()
 
 
+def _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run_name):
+    pitch_accel, roll_accel = _accel_tilt_deg(accel)
+
+    print("Run file: %s" % run_name)
+
+    fig, axes = plt.subplots(2, 1, sharex=True, num="Baseline vs Accel-Only Tilt")
+
+    axes[0].plot(time_s, pitch_accel, color="gold", label="pitch from accel")
+    axes[0].plot(time_s, ref_pitch, color="C0", label="baseline pitch")
+    axes[0].set_ylabel("Pitch (deg)")
+    axes[0].grid(True)
+    axes[0].legend()
+
+    axes[1].plot(time_s, roll_accel, color="gold", label="roll from accel")
+    axes[1].plot(time_s, ref_roll, color="C0", label="baseline roll")
+    axes[1].set_xlabel("Time (s)")
+    axes[1].set_ylabel("Roll (deg)")
+    axes[1].grid(True)
+    axes[1].legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run Mahony inclinometer from parquet message folders using YAML mapping."
@@ -298,9 +389,9 @@ def main():
     )
     parser.add_argument(
         "--plot-mode",
-        choices=["compare", "baseline-gyro"],
+        choices=["compare", "baseline-gyro", "baseline-accel"],
         default="compare",
-        help="compare: baseline vs Mahony + error. baseline-gyro: baseline angle with direct gyro overlay.",
+        help="compare: baseline vs Mahony + error. baseline-gyro: baseline angle with direct gyro overlay. baseline-accel: baseline vs accelerometer-only tilt.",
     )
     args = parser.parse_args()
 
@@ -320,6 +411,8 @@ def main():
     time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _build_data_arrays(frames, col_map)
     if args.plot_mode == "baseline-gyro":
         _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name)
+    elif args.plot_mode == "baseline-accel":
+        _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run_name)
     else:
         fs = _estimate_fs(time_s)
         est_pitch, est_roll = _run_mahony(fs, accel, gyro_rad)
