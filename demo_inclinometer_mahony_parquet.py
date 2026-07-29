@@ -378,6 +378,35 @@ def _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run_name)
     plt.show()
 
 
+def _apply_time_window(time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll, start_s=None, end_s=None):
+    if start_s is None and end_s is None:
+        return time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll
+
+    if start_s is None:
+        start_s = time_s[0]
+    if end_s is None:
+        end_s = time_s[-1]
+    if end_s < start_s:
+        raise ValueError("--end-s must be greater than or equal to --start-s.")
+
+    mask = (time_s >= start_s) & (time_s <= end_s)
+    if not np.any(mask):
+        raise ValueError("No samples found in the requested time window.")
+
+    t_win = time_s[mask]
+    # Re-zero selected window for cleaner x-axis.
+    t_win = t_win - t_win[0]
+
+    return (
+        t_win,
+        accel[mask, :],
+        gyro_rad[mask, :],
+        gyro_deg[mask, :],
+        ref_pitch[mask],
+        ref_roll[mask],
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run Mahony inclinometer from parquet message folders using YAML mapping."
@@ -396,6 +425,18 @@ def main():
         "--test-file",
         required=True,
         help="Parquet run filename (with or without .parquet).",
+    )
+    parser.add_argument(
+        "--start-s",
+        type=float,
+        default=None,
+        help="Optional start time in seconds from beginning of run.",
+    )
+    parser.add_argument(
+        "--end-s",
+        type=float,
+        default=None,
+        help="Optional end time in seconds from beginning of run.",
     )
     parser.add_argument(
         "--plot-mode",
@@ -419,6 +460,16 @@ def main():
     frames = _read_msg_frames(sensor_dir, required_msgs, run_name)
 
     time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _build_data_arrays(frames, col_map)
+    time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _apply_time_window(
+        time_s,
+        accel,
+        gyro_rad,
+        gyro_deg,
+        ref_pitch,
+        ref_roll,
+        start_s=args.start_s,
+        end_s=args.end_s,
+    )
     if args.plot_mode == "baseline-gyro":
         _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name)
     elif args.plot_mode == "baseline-accel":
