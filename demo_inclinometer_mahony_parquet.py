@@ -4,10 +4,10 @@
 """
 Run Mahony inclinometer using recorded parquet files described by a YAML mapping.
 
-This parser assumes standardized source units:
+This parser converts recorded source units using YAML scale factors:
 - time in seconds
-- accel in m/s^2
-- gyro in deg/s
+- accel to m/s^2
+- gyro to deg/s
 - pitch/roll in degrees
 Only the filter-required gyro conversion (deg/s -> rad/s) is applied.
 """
@@ -209,7 +209,15 @@ def _extract_series(frames, msg_name, signal_name, time_col, target_t):
     return values
 
 
-def _build_data_arrays(frames, col_map):
+def _input_scale(cfg, name):
+    scale_cfg = cfg.get("input_scale", {})
+    scale = float(scale_cfg.get(name, 1.0))
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("input_scale.%s must be a finite value greater than zero." % name)
+    return scale
+
+
+def _build_data_arrays(frames, col_map, accel_to_mps2, gyro_to_dps):
     time_col = col_map["time"]
     master_msg = col_map["accel"]["msg"]["x"]
     if time_col not in frames[master_msg].columns:
@@ -230,7 +238,10 @@ def _build_data_arrays(frames, col_map):
         accel[:, i] = _extract_series(frames, a_msg, a_sig, time_col, t_abs)
         gyro_deg[:, i] = _extract_series(frames, g_msg, g_sig, time_col, t_abs)
 
-    # Source accel is already m/s^2. Convert source gyro deg/s to rad/s for Mahony.
+    accel *= accel_to_mps2
+    gyro_deg *= gyro_to_dps
+
+    # Convert scaled gyro deg/s to rad/s for Mahony.
     gyro_rad = np.deg2rad(gyro_deg)
 
     angle_msg_map = col_map["angle"]["msg"]
@@ -253,7 +264,7 @@ def _estimate_fs(time_s):
     return 1.0 / np.median(dt)
 
 
-def _run_mahony(fs, accel, gyro):
+def _run_mahony(fs, accel, gyro, roll_offset_deg=0.0):
     algo = inclinometer_mahony.MahonyFilter()
     algo.run([fs, gyro, accel])
     quat = algo.get_results()[0]
@@ -261,7 +272,10 @@ def _run_mahony(fs, accel, gyro):
     for i in range(quat.shape[0]):
         est_euler[i, :] = attitude.quat2euler(quat[i, :], rot_seq="zyx")
     est_pitch_deg = np.rad2deg(est_euler[:, 1])
-    est_roll_deg = np.rad2deg(est_euler[:, 2])
+    est_roll_deg = np.rad2deg(est_euler[:, 2]) + roll_offset_deg
+    est_roll_deg = np.rad2deg(
+        np.arctan2(np.sin(np.deg2rad(est_roll_deg)), np.cos(np.deg2rad(est_roll_deg)))
+    )
     return est_pitch_deg, est_roll_deg
 
 
@@ -461,12 +475,18 @@ def main():
 
     cfg = _load_mapping(mapping_file)
     col_map = cfg["parquet_column_map"]
+    accel_to_mps2 = _input_scale(cfg, "accel_to_mps2")
+    gyro_to_dps = _input_scale(cfg, "gyro_to_dps")
+    mahony_output = cfg.get("mahony_output", {})
+    roll_offset_deg = float(mahony_output.get("roll_offset_deg", 0.0))
 
     required_msgs = _collect_required_msg_folders(col_map)
     run_name = _resolve_run_name(sensor_dir, required_msgs, args.test_file)
     frames = _read_msg_frames(sensor_dir, required_msgs, run_name)
 
-    time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _build_data_arrays(frames, col_map)
+    time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _build_data_arrays(
+        frames, col_map, accel_to_mps2, gyro_to_dps
+    )
     time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _apply_time_window(
         time_s,
         accel,
@@ -483,7 +503,7 @@ def main():
         _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run_name)
     else:
         fs = _estimate_fs(time_s)
-        est_pitch, est_roll = _run_mahony(fs, accel, gyro_rad)
+        est_pitch, est_roll = _run_mahony(fs, accel, gyro_rad, roll_offset_deg)
         _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name)
 
 

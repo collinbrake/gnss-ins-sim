@@ -40,11 +40,13 @@ We provide the following demos to show how to use this tool:
 
 This `collinbrake/gnss-ins-sim` fork of the `aceinna/gnss-ins-sim` repository adds functionality to read recorded IMU data from parquet files instead of simulating data through motion definitions. The application this was designed for is CAN bus IMU data decoded to parquet format, where one parquet file is created per CAN message, and signals may be distributed with arbitrary names over arbitrary messages based on the IMU component under test.
 
-Expected units in parquet data:
+Expected parser input units:
 - Time: seconds
 - Acceleration: m/s^2
 - Gyroscope: deg/s
 - Reference angles (pitch and roll): degrees
+
+Raw acceleration and gyro columns can use other linear units. Set `input_scale.accel_to_mps2` to multiply raw acceleration into m/s^2, and `input_scale.gyro_to_dps` to multiply raw gyro into deg/s. Both default to `1.0` when omitted.
 
 The goal is to run the Mahony inclinometer algorithm from this repository on recorded raw gyro and accelerometer data, then compare the filter output with a baseline recorded pitch and roll.
 
@@ -110,6 +112,11 @@ parquet_column_map:
     signal:
       pitch: pitch
       roll: roll
+
+input_scale:
+  # Examples: cm/s^2 -> m/s^2 is 0.01; centi-deg/s -> deg/s is 0.01.
+  accel_to_mps2: 1.0
+  gyro_to_dps: 1.0
 ```
 
 sensor2.yaml example:
@@ -148,6 +155,10 @@ parquet_column_map:
     signal:
       pitch: pitch_deg
       roll: roll_deg
+
+input_scale:
+  accel_to_mps2: 1.0
+  gyro_to_dps: 1.0
 ```
 
 Python can read this file to map parquet columns to the parser input fields.
