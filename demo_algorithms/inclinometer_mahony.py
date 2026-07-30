@@ -40,8 +40,8 @@ class MahonyFilter(object):
         self.ki_acc_low = 0.001
 
         if True: # optimal found for +/- 20 degree pitch direction reversals
-            self.kp_acc_high = 1.25
-            self.kp_acc_low = 0
+            self.kp_acc_high = 1.0
+            self.kp_acc_low = 0.2
             self.ki_acc_high = 0
             self.ki_acc_low = 0
 
