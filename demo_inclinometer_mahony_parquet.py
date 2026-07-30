@@ -217,6 +217,14 @@ def _input_scale(cfg, name):
     return scale
 
 
+def _baseline_angle_sign(cfg, axis):
+    sign_cfg = cfg.get("baseline_angle_sign", {})
+    sign = float(sign_cfg.get(axis, 1.0))
+    if sign not in (-1.0, 1.0):
+        raise ValueError("baseline_angle_sign.%s must be either -1 or 1." % axis)
+    return sign
+
+
 def _build_data_arrays(frames, col_map, accel_to_mps2, gyro_to_dps):
     time_col = col_map["time"]
     master_msg = col_map["accel"]["msg"]["x"]
@@ -477,6 +485,8 @@ def main():
     col_map = cfg["parquet_column_map"]
     accel_to_mps2 = _input_scale(cfg, "accel_to_mps2")
     gyro_to_dps = _input_scale(cfg, "gyro_to_dps")
+    baseline_pitch_sign = _baseline_angle_sign(cfg, "pitch")
+    baseline_roll_sign = _baseline_angle_sign(cfg, "roll")
     mahony_output = cfg.get("mahony_output", {})
     roll_offset_deg = float(mahony_output.get("roll_offset_deg", 0.0))
 
@@ -487,6 +497,8 @@ def main():
     time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _build_data_arrays(
         frames, col_map, accel_to_mps2, gyro_to_dps
     )
+    ref_pitch *= baseline_pitch_sign
+    ref_roll *= baseline_roll_sign
     time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _apply_time_window(
         time_s,
         accel,
