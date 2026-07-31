@@ -22,11 +22,19 @@ def _estimate_fs(time_s):
     return 1.0 / np.median(dt)
 
 
-def _run_mahony(fs, accel, gyro, roll_offset_deg=0.0, approx_gains=None):
+def _run_mahony(fs, accel, gyro, roll_offset_deg=0.0, approx_gains=None, gyro_only=False):
     if approx_gains is None:
         algo = inclinometer_mahony.MahonyFilter()
+        if gyro_only:
+            algo.kp_acc_high = 0.0
+            algo.ki_acc_high = 0.0
+            algo.kp_acc_low = 0.0
+            algo.ki_acc_low = 0.0
     else:
         ki, kp = approx_gains
+        if gyro_only:
+            ki = 0.0
+            kp = 0.0
         algo = inclinometer_mahony_approx.MahonyFilter(kp_acc=kp, ki_acc=ki)
     algo.run([fs, gyro, accel])
     quat = algo.get_results()[0]
@@ -41,7 +49,7 @@ def _run_mahony(fs, accel, gyro, roll_offset_deg=0.0, approx_gains=None):
     return est_pitch_deg, est_roll_deg
 
 
-def _accel_tilt_deg(accel):
+def _accel_orientation(accel):
     ax = accel[:, 0]
     ay = accel[:, 1]
     az = accel[:, 2]
@@ -193,76 +201,9 @@ def _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
     plt.show()
 
 
-def _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run_name):
-    print("Run file: %s" % run_name)
-    fig, axes = plt.subplots(3, 1, sharex=True, num="Baseline Angle and Gyro")
-
-    ax_pitch = axes[0]
-    ax_pitch_gyro = ax_pitch.twinx()
-    line_pitch, = ax_pitch.plot(time_s, ref_pitch, color="C0", label="ref pitch")
-    line_pitch_gyro, = ax_pitch_gyro.plot(
-        time_s, gyro_deg[:, 1], color="C1", linestyle="--", label="gyro y"
-    )
-    ax_pitch.set_ylabel("Pitch (deg)")
-    ax_pitch_gyro.set_ylabel("Gyro Y (deg/s)")
-    ax_pitch.grid(True)
-    ax_pitch.legend([line_pitch, line_pitch_gyro], ["ref pitch", "gyro y"], loc="upper right")
-
-    ax_roll = axes[1]
-    ax_roll_gyro = ax_roll.twinx()
-    line_roll, = ax_roll.plot(time_s, ref_roll, color="C0", label="ref roll")
-    line_roll_gyro, = ax_roll_gyro.plot(
-        time_s, gyro_deg[:, 0], color="C1", linestyle="--", label="gyro x"
-    )
-    ax_roll.set_ylabel("Roll (deg)")
-    ax_roll_gyro.set_ylabel("Gyro X (deg/s)")
-    ax_roll.grid(True)
-    ax_roll.legend([line_roll, line_roll_gyro], ["ref roll", "gyro x"], loc="upper right")
-
-    axes[2].plot(time_s, gyro_deg[:, 0], label="gyro x")
-    axes[2].plot(time_s, gyro_deg[:, 1], label="gyro y")
-    axes[2].plot(time_s, gyro_deg[:, 2], label="gyro z")
-    axes[2].set_xlabel("Time (s)")
-    axes[2].set_ylabel("Gyro (deg/s)")
-    axes[2].grid(True)
-    axes[2].legend()
-
-    plt.tight_layout()
-    plt.show()
-
-
-def _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run_name):
-    pitch_accel, roll_accel = _accel_tilt_deg(accel)
-
-    print("Run file: %s" % run_name)
-    fig, axes = plt.subplots(3, 1, sharex=True, num="Baseline vs Accel-Only Tilt")
-    axes[0].plot(time_s, pitch_accel, color="gold", label="pitch from accel")
-    axes[0].plot(time_s, ref_pitch, color="C0", label="baseline pitch")
-    axes[0].set_ylabel("Pitch (deg)")
-    axes[0].grid(True)
-    axes[0].legend()
-
-    axes[1].plot(time_s, roll_accel, color="gold", label="roll from accel")
-    axes[1].plot(time_s, ref_roll, color="C0", label="baseline roll")
-    axes[1].set_ylabel("Roll (deg)")
-    axes[1].grid(True)
-    axes[1].legend()
-
-    axes[2].plot(time_s, accel[:, 0], label="acc x")
-    axes[2].plot(time_s, accel[:, 1], label="acc y")
-    axes[2].plot(time_s, accel[:, 2], label="acc z")
-    axes[2].set_xlabel("Time (s)")
-    axes[2].set_ylabel("Accel (m/s^2)")
-    axes[2].grid(True)
-    axes[2].legend()
-
-    plt.tight_layout()
-    plt.show()
-
-
-def _apply_time_window(time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll, start_s=None, end_s=None):
+def _apply_time_window(time_s, accel, gyro_rad, ref_pitch, ref_roll, start_s=None, end_s=None):
     if start_s is None and end_s is None:
-        return time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll
+        return time_s, accel, gyro_rad, ref_pitch, ref_roll
     if start_s is None:
         start_s = time_s[0]
     if end_s is None:
@@ -279,7 +220,6 @@ def _apply_time_window(time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll, s
         selected_time_s,
         accel[mask, :],
         gyro_rad[mask, :],
-        gyro_deg[mask, :],
         ref_pitch[mask],
         ref_roll[mask],
     )
@@ -306,11 +246,7 @@ def main():
         default=None,
         help="Use fixed-gain PI tuning with integral and proportional gains, in KI KP order.",
     )
-    parser.add_argument(
-        "--plot-mode",
-        choices=["compare", "baseline-gyro", "baseline-accel"],
-        default="compare",
-    )
+    parser.add_argument("--mode", choices=["mahony", "gyro", "accel"], default="mahony")
     args = parser.parse_args()
 
     if args.approx is not None:
@@ -323,32 +259,31 @@ def main():
         print("Approximate wn=%.6g rad/s, zeta=%.6g" % (natural_frequency, damping_ratio))
 
     run = load_sensor_run(args.path, args.sensor_folder, args.test_file)
-    time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _apply_time_window(
+    time_s, accel, gyro_rad, ref_pitch, ref_roll = _apply_time_window(
         run.time_s,
         run.accel_mps2,
         run.gyro_radps,
-        run.gyro_dps,
         run.baseline_pitch_deg,
         run.baseline_roll_deg,
         start_s=args.start_s,
         end_s=args.end_s,
     )
-    if args.plot_mode == "baseline-gyro":
-        _plot_baseline_with_gyro(time_s, ref_pitch, ref_roll, gyro_deg, run.run_name)
-    elif args.plot_mode == "baseline-accel":
-        _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run.run_name)
+    fs = _estimate_fs(time_s)
+    if args.approx is not None and args.mode != "gyro":
+        _plot_approx_control_analysis(*args.approx)
+    if args.mode == "accel" and args.approx is None:
+        est_pitch, est_roll = _accel_orientation(accel)
     else:
-        fs = _estimate_fs(time_s)
-        if args.approx is not None:
-            _plot_approx_control_analysis(*args.approx)
+        gyro_input = np.zeros_like(gyro_rad) if args.mode == "accel" else gyro_rad
         est_pitch, est_roll = _run_mahony(
             fs,
             accel,
-            gyro_rad,
+            gyro_input,
             run.mahony_roll_offset_deg,
             approx_gains=args.approx,
+            gyro_only=args.mode == "gyro",
         )
-        _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run.run_name)
+    _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run.run_name)
 
 
 if __name__ == "__main__":

@@ -173,6 +173,10 @@ Run the demo by providing the sensor name (data folder name). All other data lay
 python demo_inclinometer_mahony_parquet.py --path path/to/data --sensor-folder sensor1 --test-file test1
 ```
 
+Use `--mode gyro` to run a quaternion loop with every accelerometer PI gain set to zero. It also applies to `--approx`; in that combination the supplied `KI KP` pair is bypassed and the approximate control plots are not shown.
+
+Use `--mode accel` for accelerometer-only attitude. Without `--approx`, it calculates pitch and roll directly from the acceleration vector. With `--approx KI KP`, it runs the approximate PI observer with gyro input set to zero.
+
 For fixed-gain classical PI tuning, pass the integral and proportional gains to `--approx`, in `KI KP` order:
 
 ```bash
