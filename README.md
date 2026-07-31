@@ -173,6 +173,14 @@ Run the demo by providing the sensor name (data folder name). All other data lay
 python demo_inclinometer_mahony_parquet.py --path path/to/data --sensor-folder sensor1 --test-file test1
 ```
 
+For fixed-gain classical PI tuning, pass the integral and proportional gains to `--approx`, in `KI KP` order:
+
+```bash
+python demo_inclinometer_mahony_parquet.py --path path/to/data --sensor-folder sensor1 --test-file test1 --approx 0.5 1.0
+```
+
+This mode disables Mahony gain scheduling and innovation clipping. Its small-angle approximation is $s^2 + K_p s + K_i = 0$, so choose gains from $K_i = \omega_n^2$ and $K_p = 2\zeta\omega_n$. The demo prints the corresponding $\omega_n$ and $\zeta$, and displays a root locus plus Bode plots for the accelerometer and gyro paths.
+
 # Get started
 
 ## Step 1 Define the IMU model

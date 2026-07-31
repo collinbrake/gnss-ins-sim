@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from demo_algorithms import inclinometer_mahony
+from demo_algorithms import inclinometer_mahony_approx
 from gnss_ins_sim.attitude import attitude
 from gnss_ins_sim.parquet import load_sensor_run
 
@@ -21,8 +22,12 @@ def _estimate_fs(time_s):
     return 1.0 / np.median(dt)
 
 
-def _run_mahony(fs, accel, gyro, roll_offset_deg=0.0):
-    algo = inclinometer_mahony.MahonyFilter()
+def _run_mahony(fs, accel, gyro, roll_offset_deg=0.0, approx_gains=None):
+    if approx_gains is None:
+        algo = inclinometer_mahony.MahonyFilter()
+    else:
+        ki, kp = approx_gains
+        algo = inclinometer_mahony_approx.MahonyFilter(kp_acc=kp, ki_acc=ki)
     algo.run([fs, gyro, accel])
     quat = algo.get_results()[0]
     est_euler = np.zeros((quat.shape[0], 3))
@@ -43,6 +48,117 @@ def _accel_tilt_deg(accel):
     pitch_deg = np.rad2deg(np.arctan2(ax, np.sqrt(ay * ay + az * az)))
     roll_deg = np.rad2deg(np.arctan2(ay, az))
     return pitch_deg, roll_deg
+
+
+def _plot_bode(magnitude_axis, phase_axis, frequency_hz, response, title):
+    magnitude_axis.semilogx(frequency_hz, 20.0 * np.log10(np.maximum(np.abs(response), 1e-15)))
+    magnitude_axis.set_title(title)
+    magnitude_axis.set_ylabel("Magnitude (dB)")
+    magnitude_axis.grid(True, which="both")
+
+    phase_axis.semilogx(frequency_hz, np.rad2deg(np.unwrap(np.angle(response))))
+    phase_axis.set_xlabel("Frequency (Hz)")
+    phase_axis.set_ylabel("Phase (deg)")
+    phase_axis.grid(True, which="both")
+
+
+def _add_locus_arrows(axis, poles, loop_gains, color):
+    for target_gain in (0.1, 2.0):
+        index = int(np.argmin(np.abs(loop_gains - target_gain)))
+        for branch in range(2):
+            start = poles[max(index - 12, 0), branch]
+            end = poles[index, branch]
+            axis.annotate(
+                "",
+                xy=(end.real, end.imag),
+                xytext=(start.real, start.imag),
+                arrowprops={"arrowstyle": "->", "color": color, "linewidth": 1.5},
+            )
+
+
+def _plot_approx_control_analysis(ki, kp):
+    """Plot the fixed-PI small-angle model used by the approximate filter."""
+    frequency_scale = max(np.sqrt(ki), kp, 1.0)
+    frequency_radps = np.logspace(
+        np.log10(frequency_scale) - 3.0,
+        np.log10(frequency_scale) + 3.0,
+        600,
+    )
+    frequency_hz = frequency_radps / (2.0 * np.pi)
+    s = 1j * frequency_radps
+    denominator = s * s + kp * s + ki
+    accel_response = (kp * s + ki) / denominator
+    gyro_angle_response = s * s / denominator
+
+    fig = plt.figure(num="Approximate Mahony Control Analysis", figsize=(11, 9))
+    grid = fig.add_gridspec(3, 2, height_ratios=[1.15, 1.0, 1.0])
+    root_axis = fig.add_subplot(grid[0, :])
+    accel_magnitude_axis = fig.add_subplot(grid[1, 0])
+    accel_phase_axis = fig.add_subplot(grid[2, 0], sharex=accel_magnitude_axis)
+    gyro_magnitude_axis = fig.add_subplot(grid[1, 1])
+    gyro_phase_axis = fig.add_subplot(grid[2, 1], sharex=gyro_magnitude_axis)
+
+    loop_gains = np.concatenate(([0.0], np.logspace(-4, 3, 600)))
+    discriminant = (loop_gains * kp) ** 2 - 4.0 * loop_gains * ki
+    discriminant_root = np.lib.scimath.sqrt(discriminant)
+    poles = np.column_stack((
+        (-loop_gains * kp + discriminant_root) / 2.0,
+        (-loop_gains * kp - discriminant_root) / 2.0,
+    ))
+    root_axis.plot(poles[:, 0].real, poles[:, 0].imag, color="C0", label="root locus")
+    root_axis.plot(poles[:, 1].real, poles[:, 1].imag, color="C0")
+    _add_locus_arrows(root_axis, poles, loop_gains, "C0")
+    selected_poles = np.roots([1.0, kp, ki])
+    root_axis.plot(
+        selected_poles.real,
+        selected_poles.imag,
+        "x",
+        color="C3",
+        markersize=8,
+        markeredgewidth=2,
+        label="selected gains (K=1)",
+    )
+    root_axis.plot(0.0, 0.0, "x", color="black", markersize=8, markeredgewidth=2, label="2 poles")
+    root_axis.annotate("two open-loop poles", xy=(0.0, 0.0), xytext=(8, 8), textcoords="offset points")
+    zero_location = None
+    if kp > 0.0:
+        zero_location = -ki / kp
+        root_axis.plot(zero_location, 0.0, "o", color="black", fillstyle="none", markersize=8, label="PI zero")
+        root_axis.annotate("PI zero", xy=(zero_location, 0.0), xytext=(8, -14), textcoords="offset points")
+    root_axis.axhline(0.0, color="black", linewidth=0.8)
+    root_axis.axvline(0.0, color="black", linewidth=0.8)
+    root_axis.set_title("Root Locus: $s^2 + K(K_p s + K_i) = 0$")
+    root_axis.set_xlabel("Real axis (rad/s)")
+    root_axis.set_ylabel("Imaginary axis (rad/s)")
+    view_scale = max(np.max(np.abs(selected_poles)), abs(zero_location or 0.0), 0.1)
+    root_axis.set_xlim(-3.0 * view_scale, 0.5 * view_scale)
+    root_axis.set_ylim(-2.0 * view_scale, 2.0 * view_scale)
+    root_axis.grid(True)
+    root_axis.legend()
+    root_axis.text(
+        0.02,
+        0.97,
+        "$K=1:\\quad s^2 + %.4g s + %.4g = 0$" % (kp, ki),
+        transform=root_axis.transAxes,
+        verticalalignment="top",
+        bbox={"boxstyle": "square", "facecolor": "white", "alpha": 0.9},
+    )
+
+    _plot_bode(
+        accel_magnitude_axis,
+        accel_phase_axis,
+        frequency_hz,
+        accel_response,
+        "Accel Path: $(K_p s + K_i)/(s^2 + K_p s + K_i)$",
+    )
+    _plot_bode(
+        gyro_magnitude_axis,
+        gyro_phase_axis,
+        frequency_hz,
+        gyro_angle_response,
+        "Integrated Gyro Path: $s^2/(s^2 + K_p s + K_i)$",
+    )
+    fig.tight_layout()
 
 
 def _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
@@ -183,11 +299,28 @@ def main():
     parser.add_argument("--start-s", type=float, default=None)
     parser.add_argument("--end-s", type=float, default=None)
     parser.add_argument(
+        "--approx",
+        nargs=2,
+        type=float,
+        metavar=("KI", "KP"),
+        default=None,
+        help="Use fixed-gain PI tuning with integral and proportional gains, in KI KP order.",
+    )
+    parser.add_argument(
         "--plot-mode",
         choices=["compare", "baseline-gyro", "baseline-accel"],
         default="compare",
     )
     args = parser.parse_args()
+
+    if args.approx is not None:
+        ki, kp = args.approx
+        if kp < 0.0 or ki < 0.0:
+            parser.error("--approx KI KP values must be greater than or equal to zero.")
+        natural_frequency = np.sqrt(ki)
+        damping_ratio = kp / (2.0 * natural_frequency) if natural_frequency > 0.0 else np.inf
+        print("Approximate PI tuning: Ki=%.6g, Kp=%.6g" % (ki, kp))
+        print("Approximate wn=%.6g rad/s, zeta=%.6g" % (natural_frequency, damping_ratio))
 
     run = load_sensor_run(args.path, args.sensor_folder, args.test_file)
     time_s, accel, gyro_rad, gyro_deg, ref_pitch, ref_roll = _apply_time_window(
@@ -206,8 +339,14 @@ def main():
         _plot_baseline_with_accel_tilt(time_s, ref_pitch, ref_roll, accel, run.run_name)
     else:
         fs = _estimate_fs(time_s)
+        if args.approx is not None:
+            _plot_approx_control_analysis(*args.approx)
         est_pitch, est_roll = _run_mahony(
-            fs, accel, gyro_rad, run.mahony_roll_offset_deg
+            fs,
+            accel,
+            gyro_rad,
+            run.mahony_roll_offset_deg,
+            approx_gains=args.approx,
         )
         _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run.run_name)
 
