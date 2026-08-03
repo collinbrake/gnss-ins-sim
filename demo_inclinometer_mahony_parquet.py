@@ -54,7 +54,7 @@ def _accel_orientation(accel):
     ay = accel[:, 1]
     az = accel[:, 2]
     pitch_deg = np.rad2deg(np.arctan2(ax, np.sqrt(ay * ay + az * az)))
-    roll_deg = np.rad2deg(np.arctan2(ay, az))
+    roll_deg = np.rad2deg(np.arctan2(-ay, -az))
     return pitch_deg, roll_deg
 
 

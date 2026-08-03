@@ -34,6 +34,7 @@ class MahonyFilter(object):
         # algorithm vars
         # config
         self.innovationLimit = 0.1
+        self.gyroInnovationLimit = 300 * math.pi / 180.0
         self.kp_acc_high = 1
         self.kp_acc_low = 0.01
         self.ki_acc_high = 0.5
@@ -89,6 +90,7 @@ class MahonyFilter(object):
         '''
         mag_valid = (mag[0] != 0.0) or (mag[1] != 0.0) or (mag[2] != 0.0)
         acc_valid = (acc[0] != 0.0) or (acc[1] != 0.0) or (acc[2] != 0.0)
+        gyro = self.limit_gyro_innovation(gyro)
         # dynamic mode to be added here
         if math.fabs(math.sqrt(np.dot(acc, acc)) - 9.8) > 0.2 or\
            math.sqrt(np.dot(gyro, gyro)) > 0.2:
@@ -126,6 +128,18 @@ class MahonyFilter(object):
         # mag is not valid, acc+gyro fusion
         if not mag_valid:
             self.update_imu(gyro, acc)
+
+    def limit_gyro_innovation(self, gyro):
+        '''
+        Limit the gyro innovation vector before attitude propagation.
+        '''
+        gyro_innovation = gyro.copy()
+        gyro_innovation_norm = math.sqrt(np.dot(gyro_innovation, gyro_innovation))
+        if gyro_innovation_norm > self.gyroInnovationLimit:
+            gyro_innovation = (
+                gyro_innovation / gyro_innovation_norm * self.gyroInnovationLimit
+            )
+        return gyro_innovation
 
     def update_imu(self, gyro, acc):
         '''

@@ -179,7 +179,19 @@ def _baseline_angle_sign(cfg, axis):
     return sign
 
 
-def _build_data_arrays(frames, column_map, accel_to_mps2, gyro_to_dps):
+def _sensor_to_mahony_rotation(cfg):
+    rotation = np.asarray(cfg.get("sensor_to_mahony_rotation", np.eye(3)), dtype=float)
+    if rotation.shape != (3, 3) or not np.isfinite(rotation).all():
+        raise ValueError("sensor_to_mahony_rotation must be a finite 3 by 3 matrix.")
+    if not np.allclose(rotation @ rotation.T, np.eye(3), rtol=0.0, atol=1e-6):
+        raise ValueError("sensor_to_mahony_rotation must be orthonormal.")
+    if not np.isclose(np.linalg.det(rotation), 1.0, rtol=0.0, atol=1e-6):
+        raise ValueError("sensor_to_mahony_rotation must have determinant +1.")
+    return rotation
+
+
+def _build_data_arrays(
+        frames, column_map, accel_to_mps2, gyro_to_dps, sensor_to_mahony_rotation):
     time_col = column_map["time"]
     master_msg = column_map["accel"]["msg"]["x"]
     if time_col not in frames[master_msg].columns:
@@ -208,6 +220,8 @@ def _build_data_arrays(frames, column_map, accel_to_mps2, gyro_to_dps):
 
     accel_mps2 *= accel_to_mps2
     gyro_dps *= gyro_to_dps
+    accel_mps2 = accel_mps2 @ sensor_to_mahony_rotation.T
+    gyro_dps = gyro_dps @ sensor_to_mahony_rotation.T
     angle_msg_map = column_map["angle"]["msg"]
     baseline_pitch_deg = _extract_series(
         frames,
@@ -245,6 +259,7 @@ def load_sensor_run(root_path, sensor_folder, test_file):
         column_map,
         _input_scale(cfg, "accel_to_mps2"),
         _input_scale(cfg, "gyro_to_dps"),
+        _sensor_to_mahony_rotation(cfg),
     )
     baseline_pitch_deg *= _baseline_angle_sign(cfg, "pitch")
     baseline_roll_deg *= _baseline_angle_sign(cfg, "roll")
