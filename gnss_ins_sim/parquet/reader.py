@@ -190,8 +190,20 @@ def _sensor_to_mahony_rotation(cfg):
     return rotation
 
 
+def _gyro_axis_sign(cfg):
+    signs_cfg = cfg.get("gyro_axis_sign", {})
+    unknown_axes = set(signs_cfg).difference(("x", "y", "z"))
+    if unknown_axes:
+        raise ValueError("gyro_axis_sign contains unknown axes: %s." % sorted(unknown_axes))
+    signs = np.array([float(signs_cfg.get(axis, 1.0)) for axis in ("x", "y", "z")])
+    if not np.isin(signs, (-1.0, 1.0)).all():
+        raise ValueError("gyro_axis_sign values must be either -1 or 1.")
+    return signs
+
+
 def _build_data_arrays(
-        frames, column_map, accel_to_mps2, gyro_to_dps, sensor_to_mahony_rotation):
+        frames, column_map, accel_to_mps2, gyro_to_dps, sensor_to_mahony_rotation,
+        gyro_axis_sign):
     time_col = column_map["time"]
     master_msg = column_map["accel"]["msg"]["x"]
     if time_col not in frames[master_msg].columns:
@@ -222,6 +234,7 @@ def _build_data_arrays(
     gyro_dps *= gyro_to_dps
     accel_mps2 = accel_mps2 @ sensor_to_mahony_rotation.T
     gyro_dps = gyro_dps @ sensor_to_mahony_rotation.T
+    gyro_dps *= gyro_axis_sign
     angle_msg_map = column_map["angle"]["msg"]
     baseline_pitch_deg = _extract_series(
         frames,
@@ -260,6 +273,7 @@ def load_sensor_run(root_path, sensor_folder, test_file):
         _input_scale(cfg, "accel_to_mps2"),
         _input_scale(cfg, "gyro_to_dps"),
         _sensor_to_mahony_rotation(cfg),
+        _gyro_axis_sign(cfg),
     )
     baseline_pitch_deg *= _baseline_angle_sign(cfg, "pitch")
     baseline_roll_deg *= _baseline_angle_sign(cfg, "roll")
