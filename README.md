@@ -36,6 +36,155 @@ We provide the following demos to show how to use this tool:
 | demo_multiple_algorithms.py | A demo of multiple algorithms in a simulation. This demo shows how to compare resutls of multiple algorithm.|
 | demo_gen_data_from_files.py | This demo shows how to do simulation from logged data files.|
 
+# Get started - parquet data with Mahony inclinometer demo
+
+This `collinbrake/gnss-ins-sim` fork of the `aceinna/gnss-ins-sim` repository adds functionality to read recorded IMU data from parquet files instead of simulating data through motion definitions. The application this was designed for is CAN bus IMU data decoded to parquet format, where one parquet file is created per CAN message, and signals may be distributed with arbitrary names over arbitrary messages based on the IMU component under test.
+
+Expected parser input units:
+- Time: seconds
+- Acceleration: m/s^2
+- Gyroscope: deg/s
+- Reference angles (pitch and roll): degrees
+
+Raw acceleration and gyro columns can use other linear units. Set `input_scale.accel_to_mps2` to multiply raw acceleration into m/s^2, and `input_scale.gyro_to_dps` to multiply raw gyro into deg/s. Both default to `1.0` when omitted.
+
+The goal is to run the Mahony inclinometer algorithm from this repository on recorded raw gyro and accelerometer data, then compare the filter output with a baseline recorded pitch and roll.
+
+## Step 1 Organize the recorded data
+
+Create one top-level folder per sensor configuration. Inside that folder, create one subfolder per CAN message stream. For each recording run, keep the same parquet filename across all message subfolders so runs can be matched.
+
+Example:
+
+sensor1/
+  ├── msg1/
+  │   └── test1.parquet
+  │   └── test2.parquet
+  ├── msg2/
+  │   └── test1.parquet
+  │   └── test2.parquet
+  └── msg3/
+      └── test1.parquet
+      └── test2.parquet
+
+In this example, all files named test1.parquet belong to one synchronized run, and all files named test2.parquet belong to another run.
+
+## Step 2 Create data mapping file
+
+Create a YAML file at the same level as the message subfolders. The YAML maps parser fields to:
+- msg: which message subfolder contains the signal
+- signal: which parquet column to read
+
+sensor1.yaml example:
+- Accelerometer x, y, z come from one message stream
+- Gyroscope x, y, z come from one message stream
+- Pitch and roll come from one validated angle stream
+  
+```yaml
+parquet_column_map:
+
+  time: time_s
+
+  accel:
+    msg:
+      x: accel
+      y: accel
+      z: accel
+    signal:
+      x: x
+      y: y
+      z: z
+
+  gyro:
+    msg:
+      x: gyro
+      y: gyro
+      z: gyro
+    signal:
+      x: x
+      y: y
+      z: z
+
+  angle:
+    msg:
+      pitch: angles
+      roll: angles
+    signal:
+      pitch: pitch
+      roll: roll
+
+input_scale:
+  # Examples: cm/s^2 -> m/s^2 is 0.01; centi-deg/s -> deg/s is 0.01.
+  accel_to_mps2: 1.0
+  gyro_to_dps: 1.0
+```
+
+sensor2.yaml example:
+- One message per axis (x, y, z), where each axis message contains both accelerometer and gyroscope for that axis
+- Pitch and roll come from one validated angle stream
+
+```yaml
+parquet_column_map:
+
+  time: time_s
+
+  accel:
+    msg:
+      x: msg1
+      y: msg2
+      z: msg3
+    signal:
+      x: accel_x
+      y: accel_y
+      z: accel_z
+
+  gyro:
+    msg:
+      x: msg1
+      y: msg2
+      z: msg3
+    signal:
+      x: gyro_x
+      y: gyro_y
+      z: gyro_z
+
+  angle:
+    msg:
+      pitch: msg4
+      roll: msg4
+    signal:
+      pitch: pitch_deg
+      roll: roll_deg
+
+input_scale:
+  accel_to_mps2: 1.0
+  gyro_to_dps: 1.0
+```
+
+Python can read this file to map parquet columns to the parser input fields.
+
+If multiple sensors that provide different data layouts and units are tested, it is recommended to create a different `topfolder` for each sensor/mapping in Step 1.
+
+## Step 3 Run the parquet demo
+
+Run the demo by providing the sensor name (data folder name). All other data layout information is read from the YAML configuration file in this folder (Step 2).
+
+```bash
+python demo_inclinometer_mahony_parquet.py --path path/to/data --sensor-folder sensor1 --test-file test1
+```
+
+Use `--mode gyro` to run a quaternion loop with every accelerometer PI gain set to zero. It also applies to `--approx`; in that combination the supplied `KI KP` pair is bypassed and the approximate control plots are not shown.
+
+Use `--mode accel` for accelerometer-only attitude. Without `--approx`, it calculates pitch and roll directly from the acceleration vector. With `--approx KI KP`, it runs the approximate PI observer with gyro input set to zero.
+
+For fixed-gain classical PI tuning, pass the integral and proportional gains to `--approx`, in `KI KP` order:
+
+```bash
+python demo_inclinometer_mahony_parquet.py --path path/to/data --sensor-folder sensor1 --test-file test1 --approx 0.5 1.0
+```
+
+This mode disables Mahony gain scheduling and innovation clipping. Its small-angle approximation is $s^2 + K_p s + K_i = 0$, so choose gains from $K_i = \omega_n^2$ and $K_p = 2\zeta\omega_n$. The demo prints the corresponding $\omega_n$ and $\zeta$, and displays a root locus plus Bode plots for the accelerometer and gyro paths.
+
 # Get started
 
 ## Step 1 Define the IMU model

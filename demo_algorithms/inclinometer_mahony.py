@@ -38,6 +38,16 @@ class MahonyFilter(object):
         self.kp_acc_low = 0.01
         self.ki_acc_high = 0.5
         self.ki_acc_low = 0.001
+
+        if True: # optimal found for +/- 20 degree pitch direction reversals
+            self.innovationLimit = 0.08
+            self.kp_acc_high =  0.0847
+            # self.kp_acc_high =  0.1271
+            self.kp_acc_low = 0.0847
+            self.ki_acc_high = 0.00377
+            # self.ki_acc_high = 0.00848
+            self.ki_acc_low = 0.00377
+
         # state
         self.ini = 0                                # indicate if attitude is initialized
         self.dt = 1.0                               # sample period, sec
@@ -142,9 +152,10 @@ class MahonyFilter(object):
         # integral of the error
         self.err_int = self.err_int + self.ki_acc * acc_err * self.dt
         # gyro correction
-        k = 0.9
+        k = 0.2
         this_gyro_bias = self.kp_acc * acc_err + self.err_int
-        self.gyro_bias = k*self.gyro_bias + (1-k)*this_gyro_bias
+        # self.gyro_bias = k*self.gyro_bias + (1-k)*this_gyro_bias
+        self.gyro_bias = this_gyro_bias
         self.tmp = acc_err
         gyro = gyro + self.gyro_bias
         # quaternion update
