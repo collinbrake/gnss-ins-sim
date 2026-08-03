@@ -169,7 +169,9 @@ def _plot_approx_control_analysis(ki, kp):
     fig.tight_layout()
 
 
-def _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
+def _plot_compare(
+    time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name,
+    mode="mahony", accel=None, gyro_rad=None):
     pitch_err = est_pitch - ref_pitch
     roll_err = est_roll - ref_roll
 
@@ -177,7 +179,24 @@ def _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
     print("Pitch error RMS (deg): %.4f" % np.sqrt(np.mean(pitch_err * pitch_err)))
     print("Roll error RMS (deg): %.4f" % np.sqrt(np.mean(roll_err * roll_err)))
 
-    fig, axes = plt.subplots(3, 1, sharex=True, num="Parquet Mahony Comparison")
+    diagnostic_signal = None
+    diagnostic_name = None
+    diagnostic_unit = None
+    if mode == "gyro":
+        if gyro_rad is None:
+            raise ValueError("gyro_rad is required when mode is 'gyro'.")
+        diagnostic_signal = gyro_rad
+        diagnostic_name = "Gyro"
+        diagnostic_unit = "rad/s"
+    elif mode == "accel":
+        if accel is None:
+            raise ValueError("accel is required when mode is 'accel'.")
+        diagnostic_signal = accel
+        diagnostic_name = "Accel"
+        diagnostic_unit = "m/s^2"
+
+    plot_count = 5 if diagnostic_signal is not None else 3
+    fig, axes = plt.subplots(plot_count, 1, sharex=True, num="Parquet Mahony Comparison")
     axes[0].plot(time_s, ref_pitch, label="ref pitch")
     axes[0].plot(time_s, est_pitch, "--", label="mahony pitch")
     axes[0].set_ylabel("Pitch (deg)")
@@ -190,12 +209,21 @@ def _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run_name):
     axes[1].grid(True)
     axes[1].legend()
 
-    axes[2].plot(time_s, pitch_err, label="pitch error")
-    axes[2].plot(time_s, roll_err, label="roll error")
-    axes[2].set_xlabel("Time (s)")
-    axes[2].set_ylabel("Error (deg)")
-    axes[2].grid(True)
-    axes[2].legend()
+    if diagnostic_signal is not None:
+        for axis_index, axis_name in enumerate(("x", "y", "z")):
+            diagnostic_axis = axes[axis_index + 2]
+            diagnostic_axis.plot(time_s, diagnostic_signal[:, axis_index])
+            diagnostic_axis.set_ylabel(
+                "%s %s\n(%s)" % (diagnostic_name, axis_name, diagnostic_unit)
+            )
+            diagnostic_axis.grid(True)
+    else:
+        axes[2].plot(time_s, pitch_err, label="pitch error")
+        axes[2].plot(time_s, roll_err, label="roll error")
+        axes[2].set_ylabel("Error (deg)")
+        axes[2].grid(True)
+        axes[2].legend()
+    axes[-1].set_xlabel("Time (s)")
 
     plt.tight_layout()
     plt.show()
@@ -283,7 +311,17 @@ def main():
             approx_gains=args.approx,
             gyro_only=args.mode == "gyro",
         )
-    _plot_compare(time_s, ref_pitch, ref_roll, est_pitch, est_roll, run.run_name)
+    _plot_compare(
+        time_s,
+        ref_pitch,
+        ref_roll,
+        est_pitch,
+        est_roll,
+        run.run_name,
+        mode=args.mode,
+        accel=accel,
+        gyro_rad=gyro_rad,
+    )
 
 
 if __name__ == "__main__":
